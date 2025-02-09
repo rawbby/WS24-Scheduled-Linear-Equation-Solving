@@ -1,4 +1,4 @@
-#include "./test_util.hpp"
+#include <assert.hpp>
 
 #include <thread_pool.hpp>
 
@@ -17,7 +17,7 @@ public:
   ~Id() override = default;
 
   void
-  operator()() override
+  operator()(std::size_t tid) override
   {
     result_ = input_;
   }
@@ -40,8 +40,7 @@ main()
   for (int i = 0; i < num_tasks; ++i)
     pool.enqueue(tasks.emplace_back(std::make_shared<Id>(i)));
 
-  for (const auto& task : tasks)
-    pool.await(task);
+  pool.stop();
 
   int sum = 0;
   for (const auto& task : tasks)

@@ -1,4 +1,4 @@
-#include "./test_util.hpp"
+#include <assert.hpp>
 
 #include <thread_pool.hpp>
 
@@ -17,9 +17,9 @@ public:
   ~MultiplyByTwo() override = default;
 
   void
-  operator()() override
+  operator()(std::size_t tid) override
   {
-    result_ = 2 * input_;
+    result_ = input_ + input_;
   }
 
   int
@@ -30,17 +30,11 @@ public:
 };
 
 int
-multiply_by_two(int value)
-{
-  return value * 2;
-}
-
-int
 main()
 {
   auto pool = ThreadPool{ 4 };
-  auto task = std::make_shared<MultiplyByTwo>(21);
+  const auto task = std::make_shared<MultiplyByTwo>(21);
   pool.enqueue(task);
-  pool.await(task);
+  pool.stop();
   ASSERT_EQ(task->result(), 21 * 2);
 }

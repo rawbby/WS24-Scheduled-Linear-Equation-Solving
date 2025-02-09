@@ -4,112 +4,78 @@
 
 #include <chrono>
 #include <cmath>
-#include <cstdlib>
-#include <ctime>
+#include <filesystem>
 #include <iostream>
+
+constexpr std::size_t
+n_from_mb(std::size_t mb)
+{
+  const std::size_t bytes = mb * 1024 * 1024;
+  const std::size_t ratio = (bytes + sizeof(double) - 1) / sizeof(double);
+  std::size_t low = 0, high = ratio;
+  while (low < high) {
+    std::size_t mid = low + (high - low) / 2;
+    if (mid * mid < ratio)
+      low = mid + 1;
+    else
+      high = mid;
+  }
+  const std::size_t sqrt_val = low;
+  std::size_t power = 1;
+  while (power < sqrt_val)
+    power *= 2;
+  return power;
+}
 
 int
 main()
 {
-  std::srand(static_cast<unsigned int>(std::time(nullptr)));
+#ifdef DEBUG
+  constexpr std::size_t problem_sizes[] = {
+    n_from_mb(2),
+    n_from_mb(8),
+    n_from_mb(32),
+  };
+#else
+  constexpr std::size_t problem_sizes[] = {
+    // n_from_mb(2),
+    // n_from_mb(8),
+    // n_from_mb(32),
+    n_from_mb(128),
+    // n_from_mb(512)
+  };
+#endif
 
-  constexpr int block_sizes[] = { 16 };
-  constexpr int thread_counts[] = { 1, 2 }; // , 3, 4, 6, 8 };
-  constexpr std::size_t n = 2048;
+  for (const auto n : problem_sizes) {
+    std::cout << std::endl
+              << "Problem size " << n << "*" << n << " (" << (n * n * sizeof(double)) / (1024 * 1024) << "MB)" << std::endl;
 
-  const auto instance = generate_diagonally_dominant_system(n);
+    const auto filename = std::string("problem") + std::to_string(n) + std::string(".raw");
+    if (!std::filesystem::directory_entry{ filename }.exists()) {
+      const auto series = generate_diagonally_dominant_system(n);
+      series.serialize(filename);
+    }
+    const auto instance = LinearEquation::deserialize(filename);
 
-  {
-    auto pool = std::make_shared<ThreadPool>(1);
-    auto task = std::make_shared<lu_solver::LUSolverTask>(instance);
-    const auto start = std::chrono::steady_clock::now();
-    pool->enqueue(task);
-    pool->await(task);
-    const auto end = std::chrono::steady_clock::now();
-    const double elapsed = std::chrono::duration<double>(end - start).count();
-    std::cout << "LUSolverTask took " << elapsed << " seconds." << std::endl;
+    // for (int i = 0; i < 1; ++i) {
+    //   const auto pool = std::make_shared<ThreadPool>(1);
+    //   auto task = std::make_shared<LUSolver>(instance);
+    //   const auto start = std::chrono::steady_clock::now();
+    //   pool->enqueue(task);
+    //   pool->await(task);
+    //   const auto end = std::chrono::steady_clock::now();
+    //   const double elapsed = std::chrono::duration<double>(end - start).count();
+    //   std::cout << "LUSolver took " << std::fixed << elapsed << " seconds." << std::endl;
+    // }
+    for (int i = 6; i <= 6 /* std::thread::hardware_concurrency() */; i = ((i + 2) & (~1))) {
+      const auto pool = std::make_shared<ThreadPool>(i);
+      auto task = std::make_shared<LUSolverParallel>(instance, pool);
+      const auto start = std::chrono::steady_clock::now();
+      pool->enqueue(task);
+      pool->await(task);
+      const auto end = std::chrono::steady_clock::now();
+      const double elapsed = std::chrono::duration<double>(end - start).count();
+      std::cout << "LUSolverParallel (" << i << ") took " << std::fixed << elapsed << " seconds." << std::endl;
+    }
   }
-  {
-    auto pool = std::make_shared<ThreadPool>(6);
-    auto task = std::make_shared<lu_solver::LUSolverParallelTask>(instance, pool);
-    const auto start = std::chrono::steady_clock::now();
-    pool->enqueue(task);
-    pool->await(task);
-    const auto end = std::chrono::steady_clock::now();
-    const double elapsed = std::chrono::duration<double>(end - start).count();
-    std::cout << "LUSolverParallelTask took " << elapsed << " seconds." << std::endl;
-  }
-
-  // Helper lambda to run a solver and report elapsed time.
-  // auto benchmark = [&](const std::string& name, auto solver_func) {
-  //   const auto start = std::chrono::steady_clock::now();
-  //   const auto x = solver_func(instance);
-  //   const auto end = std::chrono::steady_clock::now();
-  //   const double elapsed = std::chrono::duration<double>(end - start).count();
-  //   std::cout << name << " took " << elapsed << " seconds." << std::endl;
-  //   return std::pair{ x, elapsed };
-  // };
-
-  // double min_single_elapsed;
-  // {
-  //   const auto [_, gauss_elapsed] = benchmark("GaussSolver", [](const LinearEquation& instance) { return gauss_solver::solve(instance); });
-  //   min_single_elapsed = std::min(min_single_elapsed, gauss_elapsed);
-  // }
-  // {
-  //   const auto [_, gauss_elapsed] = benchmark("GaussSolver", [](const LinearEquation& instance) { return gauss_solver::solve(instance); });
-  //   min_single_elapsed = std::min(min_single_elapsed, gauss_elapsed);
-  // }
-  // {
-  //   const auto [_, gauss_elapsed] = benchmark("GaussSolver", [](const LinearEquation& instance) { return gauss_solver::solve(instance); });
-  //   min_single_elapsed = std::min(min_single_elapsed, gauss_elapsed);
-  // }
-  // std::cout << std::endl;
-
-  // for (int bs : block_sizes) {
-  //   {
-  //     const auto name = "LUSolver (" + std::to_string(bs) + " block size)";
-  //     const auto [_, lu_elapsed] = benchmark(name, [bs](const LinearEquation& instance) { return lu_solver::solve(instance, static_cast<std::size_t>(bs));
-  //     }); min_single_elapsed = std::min(min_single_elapsed, lu_elapsed);
-  //   }
-  //   {
-  //     const auto name = "LUSolver (" + std::to_string(bs) + " block size)";
-  //     const auto [_, lu_elapsed] = benchmark(name, [bs](const LinearEquation& instance) { return lu_solver::solve(instance, static_cast<std::size_t>(bs));
-  //     }); min_single_elapsed = std::min(min_single_elapsed, lu_elapsed);
-  //   }
-  //   {
-  //     const auto name = "LUSolver (" + std::to_string(bs) + " block size)";
-  //     const auto [_, lu_elapsed] = benchmark(name, [bs](const LinearEquation& instance) { return lu_solver::solve(instance, static_cast<std::size_t>(bs));
-  //     }); min_single_elapsed = std::min(min_single_elapsed, lu_elapsed);
-  //   }
-  //   std::cout << std::endl;
-  // }
-
-  // for (int bs : block_sizes) {
-  //   for (int tc : thread_counts) {
-  //     {
-  //       const auto name = "LUParallelSolver (" + std::to_string(tc) + " threads, " + std::to_string(bs) + " block size)";
-  //       const auto [_, lu_elapsed] = benchmark(name, [bs, tc](const LinearEquation& instance) {
-  //         auto pool = ThreadPool{ static_cast<std::size_t>(tc) };
-  //         return lu_solver::solve_parallel(instance, pool, static_cast<std::size_t>(bs));
-  //       });
-  //       std::cout << name << " efficiency " << 100.0 * (min_single_elapsed / (lu_elapsed * static_cast<double>(tc))) << "%" << std::endl << std::endl;
-  //     }
-  //     {
-  //       const auto name = "LUParallelSolver (" + std::to_string(tc) + " threads, " + std::to_string(bs) + " block size)";
-  //       const auto [_, lu_elapsed] = benchmark(name, [bs, tc](const LinearEquation& instance) {
-  //         auto pool = ThreadPool{ static_cast<std::size_t>(tc) };
-  //         return lu_solver::solve_parallel(instance, pool, static_cast<std::size_t>(bs));
-  //       });
-  //       std::cout << name << " efficiency " << 100.0 * (min_single_elapsed / (lu_elapsed * static_cast<double>(tc))) << "%" << std::endl << std::endl;
-  //     }
-  //     {
-  //       const auto name = "LUParallelSolver (" + std::to_string(tc) + " threads, " + std::to_string(bs) + " block size)";
-  //       const auto [_, lu_elapsed] = benchmark(name, [bs, tc](const LinearEquation& instance) {
-  //         auto pool = ThreadPool{ static_cast<std::size_t>(tc) };
-  //         return lu_solver::solve_parallel(instance, pool, static_cast<std::size_t>(bs));
-  //       });
-  //       std::cout << name << " efficiency " << 100.0 * (min_single_elapsed / (lu_elapsed * static_cast<double>(tc))) << "%" << std::endl << std::endl;
-  //     }
-  //   }
-  // }
 }

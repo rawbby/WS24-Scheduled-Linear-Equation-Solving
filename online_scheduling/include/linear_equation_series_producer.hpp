@@ -1,29 +1,25 @@
 #pragma once
 
-#include <ios>
 #include <linear_equation.hpp>
+#include <linear_equation_series.hpp>
 
-#include <array>
+#include <chrono>
 #include <condition_variable>
-#include <cstring>
-#include <fstream>
+#include <cstddef>
+#include <ios>
+#include <iostream>
 #include <memory>
 #include <mutex>
 #include <queue>
-#include <stdexcept>
-#include <string>
 #include <thread>
 #include <utility>
-#include <vector>
 
 class LinearEquationSeriesProducer
 {
 public:
-  LinearEquationSeriesProducer(std::string filename,
-                               std::shared_ptr<std::queue<LinearEquation>> queue,
-                               std::shared_ptr<std::mutex> mtx,
-                               std::shared_ptr<std::condition_variable> cv)
-    : filename_(std::move(filename))
+  LinearEquationSeriesProducer(LinearEquationSeries les, double load_factor, std::shared_ptr<std::queue<LinearEquation>> queue, std::shared_ptr<std::mutex> mtx, std::shared_ptr<std::condition_variable> cv)
+    : les_(std::move(les))
+    , load_factor(load_factor)
     , queue_(std::move(queue))
     , mtx_(std::move(mtx))
     , cv_(std::move(cv))
@@ -46,53 +42,42 @@ public:
 
 private:
   void
-  run() const
+  run()
   {
-    std::ifstream ifs(filename_, std::ios::binary);
-    if (!ifs)
-      throw std::runtime_error("failed to open file");
+    double total_wait = 0.0;
+    double total_elapsed = 0.0;
+    while (!les_.instances.empty()) {
+      const auto start = std::chrono::steady_clock::now();
 
-    std::size_t count = 0;
-    {
-      std::array<char, sizeof(count)> buffer{};
-      ifs.read(buffer.data(), buffer.size());
-      std::memcpy(&count, buffer.data(), buffer.size());
-    }
+      const auto le = std::move(les_.instances.back());
+      les_.instances.pop_back();
 
-    for (std::size_t i = 0; i < count; ++i) {
-      LinearEquation inst;
-      {
-        std::array<char, sizeof(inst.n)> buffer{};
-        ifs.read(buffer.data(), buffer.size());
-        std::memcpy(&inst.n, buffer.data(), buffer.size());
-      }
-      {
-        std::array<char, sizeof(inst.score)> buffer{};
-        ifs.read(buffer.data(), buffer.size());
-        std::memcpy(&inst.score, buffer.data(), buffer.size());
-      }
-      inst.A.resize(inst.n * inst.n);
-      inst.b.resize(inst.n);
-      {
-        std::vector<char> buffer(inst.A.size() * sizeof(double));
-        ifs.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-        std::memcpy(inst.A.data(), buffer.data(), buffer.size());
-      }
-      {
-        std::vector<char> buffer(inst.b.size() * sizeof(double));
-        ifs.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-        std::memcpy(inst.b.data(), buffer.data(), buffer.size());
-      }
+      // it takes score / load factor time to create the next problem
+
+      total_wait += (le.score / load_factor);
+      const auto wait = total_wait - total_elapsed;
+      std::this_thread::sleep_for(std::chrono::milliseconds{ static_cast<std::size_t>(wait * 1000.0) });
+
       {
         std::unique_lock const lock(*mtx_);
-        queue_->push(std::move(inst));
+        queue_->push(le);
       }
       cv_->notify_one();
+
+      const auto end = std::chrono::steady_clock::now();
+      const auto elapsed = std::chrono::duration<double>(end - start).count();
+      total_elapsed += elapsed;
     }
-    ifs.close();
+    {
+      std::unique_lock const lock(*mtx_);
+      std::cout << "[Producer] ";
+      std::cout << "[elapsed:" << std::fixed << total_elapsed << "s]";
+      std::cout << "[score/load:" << std::fixed << total_wait << "s]\n";
+    }
   }
 
-  std::string filename_;
+  LinearEquationSeries les_;
+  double load_factor;
   std::shared_ptr<std::queue<LinearEquation>> queue_;
   std::shared_ptr<std::mutex> mtx_;
   std::shared_ptr<std::condition_variable> cv_;

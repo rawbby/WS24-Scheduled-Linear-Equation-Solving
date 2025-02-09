@@ -1,7 +1,7 @@
 #include <solver.hpp>
 #include <thread_pool.hpp>
 
-#include "./test_util.hpp"
+#include <assert.hpp>
 
 #include <cmath>
 #include <cstdio>

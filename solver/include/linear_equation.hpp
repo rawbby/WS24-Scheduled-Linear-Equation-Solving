@@ -14,7 +14,7 @@
 
 struct LinearEquation
 {
-  std::size_t n;
+  std::size_t n{};
   std::vector<double> A; // Coefficient matrix in row-major order (size n*n)
   std::vector<double> b; // Right-hand side vector (size n)
   double score = 0.0;    // Time (in seconds) taken by the solver

@@ -2,7 +2,7 @@
 #include <solver.hpp>
 #include <thread_pool.hpp>
 
-#include "./test_util.hpp"
+#include <assert.hpp>
 
 #include <cmath>
 #include <cstdio>
@@ -19,15 +19,15 @@ main()
   const auto x_lu = lu_solver::solve(instance);
 
   auto pool = ThreadPool{};
-  const auto x_lu_parallel = lu_solver::solve_parallel(instance, pool);
+  const auto x_lu_parallel = lu_solver::solve_parallel(instance, pool, 0);
 
   auto compute_residual = [&](const std::vector<double>& x) -> double {
     double max_residual = 0.0;
     for (std::size_t i = 0; i < n; ++i) {
       double Ax_i = 0.0;
-      for (std::size_t j = 0; j < n; ++j) {
+      for (std::size_t j = 0; j < n; ++j)
         Ax_i += instance.A[i * n + j] * x[j];
-      }
+
       const double residual = std::abs(Ax_i - instance.b[i]);
       if (residual > max_residual)
         max_residual = residual;

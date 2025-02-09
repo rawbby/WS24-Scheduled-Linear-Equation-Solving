@@ -5,7 +5,9 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdlib>
+#include <limits>
 #include <memory>
+#include <ranges>
 #include <span>
 #include <stdexcept>
 #include <thread_pool.hpp>
@@ -78,6 +80,7 @@ update_u12(std::span<double> A, std::size_t n, std::size_t i, std::size_t ib)
     }
   }
 }
+TASK(U12, (std::span<double>, A), (std::size_t, n), (std::size_t, i), (std::size_t, ib), update_u12(A, n, i, ib));
 
 /**
  * L21 corresponds to the sub-matrix for rows below the current panel ([i+ib, n))
@@ -97,6 +100,7 @@ update_l21(std::span<double> A, std::size_t n, std::size_t i, std::size_t ib)
     }
   }
 }
+TASK(L21, (std::span<double>, A), (std::size_t, n), (std::size_t, i), (std::size_t, ib), update_l21(A, n, i, ib));
 
 /**
  * A22 is the submatrix of A starting at row and column index (i+ib) to n.
@@ -108,15 +112,11 @@ inline void
 update_a22(std::span<double> A, std::size_t n, std::size_t i, std::size_t ib)
 {
   if (i + ib < n) {
-    constexpr std::size_t UPDATE_BLOCK = 16;
-    for (std::size_t r0 = i + ib; r0 < n; r0 += UPDATE_BLOCK) {
-      const std::size_t r_end = std::min(n, r0 + UPDATE_BLOCK);
+    for (std::size_t r = i + ib; r < n; ++r) {
       for (std::size_t k = i; k < i + ib; ++k) {
-        for (std::size_t r = r0; r < r_end; ++r) {
-          const double l_val = A[(r * n) + k];
-          for (std::size_t c = i + ib; c < n; ++c)
-            A[(r * n) + c] -= l_val * A[(k * n) + c];
-        }
+        const double rnk = A[(r * n) + k];
+        for (std::size_t c = i + ib; c < n; ++c)
+          A[(r * n) + c] -= rnk * A[(k * n) + c];
       }
     }
   }
@@ -128,53 +128,23 @@ update_a22(std::span<double> A, std::size_t n, std::size_t i, std::size_t ib)
  *     A22 = A22 - (L21 * U12)
  */
 inline void
-update_a22_parallel(std::span<double> A, std::size_t n, std::size_t i, std::size_t ib, ThreadPool& pool)
+update_a22_parallel(std::span<double> A, std::size_t n, std::size_t i, std::size_t ib, ThreadPool& pool, std::size_t tid)
 {
-  using A22Task = class A22Task : public Task
-  {
-    std::size_t r0;
-    std::size_t r_end;
-    std::size_t i;
-    std::size_t ib;
-    std::span<double> A;
-    std::size_t n;
-
-  public:
-    A22Task(std::size_t r0, std::size_t r_end, std::size_t i, std::size_t ib, std::span<double> A, std::size_t n)
-      : r0(r0)
-      , r_end(r_end)
-      , i(i)
-      , ib(ib)
-      , A(A)
-      , n(n)
-    {
+  TASK(A22, (std::size_t, r), (std::size_t, i), (std::size_t, ib), (std::span<double>, A), (std::size_t, n), {
+    for (std::size_t k = i; k < i + ib; ++k) {
+      const double rnk = A[r * n + k];
+      for (std::size_t c = i + ib; c < n; ++c)
+        A[r * n + c] -= rnk * A[k * n + c];
     }
-
-    ~A22Task() override = default;
-
-    void
-    operator()() override
-    {
-      for (std::size_t r = r0; r < r_end; ++r) {
-        for (std::size_t c = i + ib; c < n; ++c) {
-          double sum = 0.0;
-          for (std::size_t k = i; k < i + ib; ++k)
-            sum += A[(r * n) + k] * A[(k * n) + c];
-          A[(r * n) + c] -= sum;
-        }
-      }
-    }
-  };
+  });
 
   if (i + ib < n) {
-    constexpr std::size_t UPDATE_BLOCK = 16;
-    auto tasks = std::vector<std::shared_ptr<A22Task>>{};
-    for (std::size_t r0 = i + ib; r0 < n; r0 += UPDATE_BLOCK) {
-      const std::size_t r_end = std::min(n, r0 + UPDATE_BLOCK);
-      pool.enqueue(tasks.emplace_back(std::make_shared<A22Task>(r0, r_end, i, ib, A, n)));
-    }
-    for (const auto& task : tasks)
-      pool.await(task);
+    auto tasks = std::vector<std::shared_ptr<A22>>{};
+    for (std::size_t r = i + ib; r < n; ++r)
+      pool.enqueue_round(tasks.emplace_back(std::make_shared<A22>(r, i, ib, A, n)), tid + r);
+
+    for (const auto& task : std::views::reverse(tasks))
+      pool.await(task, tid);
   }
 }
 
@@ -243,16 +213,16 @@ solve(LinearEquation le)
 
 namespace lu_solver {
 using namespace solver::common;
-constexpr auto DEFAULT_BLOCK_SIZE = std::size_t{ 16 };
+constexpr auto BLOCK_SIZE = std::size_t{ 4 };
 
 inline std::vector<double>
-solve(LinearEquation le, std::size_t block_size = DEFAULT_BLOCK_SIZE)
+solve(LinearEquation le)
 {
   auto& [n, A, b, _] = le;
 
   // blocked lu factorization with partial pivoting
-  for (std::size_t i = 0; i < n; i += block_size) {
-    const auto ib = std::min(block_size, n - i);
+  for (std::size_t i = 0; i < n; i += BLOCK_SIZE) {
+    const auto ib = std::min(BLOCK_SIZE, n - i);
 
     // factorize panel A[i:n][i:i+ib]
     for (std::size_t k = i; k < i + ib; ++k) {
@@ -270,13 +240,13 @@ solve(LinearEquation le, std::size_t block_size = DEFAULT_BLOCK_SIZE)
 }
 
 inline std::vector<double>
-solve_parallel(LinearEquation le, ThreadPool& pool, std::size_t block_size = DEFAULT_BLOCK_SIZE)
+solve_parallel(LinearEquation le, ThreadPool& pool, std::size_t tid = std::numeric_limits<std::size_t>::max())
 {
   auto& [n, A, b, _] = le;
 
   // blocked lu factorization with partial pivoting
-  for (std::size_t i = 0; i < n; i += block_size) {
-    const auto ib = std::min(block_size, n - i);
+  for (std::size_t i = 0; i < n; i += BLOCK_SIZE) {
+    const auto ib = std::min(BLOCK_SIZE, n - i);
 
     // factorize panel A[i:n][i:i+ib]
     for (std::size_t k = i; k < i + ib; ++k) {
@@ -284,100 +254,40 @@ solve_parallel(LinearEquation le, ThreadPool& pool, std::size_t block_size = DEF
       compute_multipliers_and_update_panel(A, n, k, i, ib);
     }
 
-    update_u12(A, n, i, ib);
+    // move u12 update to another thread
+    auto u12 = std::make_shared<U12>(A, n, i, ib);
+    pool.enqueue_round(u12, tid + 1);
     update_l21(A, n, i, ib);
-    update_a22_parallel(A, n, i, ib, pool);
+    pool.await(u12, tid);
+
+    // update_u12(A, n, i, ib);
+    // update_l21(A, n, i, ib);
+
+    update_a22_parallel(A, n, i, ib, pool, tid);
   }
 
   auto y = forward_substitution(A, b, n);
   return back_substitution(A, y, n);
 }
 
-class GaussSolverTask final : public Task
-{
-  LinearEquation le_;
-  std::vector<double> y_;
-
-public:
-  explicit GaussSolverTask(LinearEquation le)
-    : le_(std::move(le))
-  {
-  }
-
-  ~GaussSolverTask() override = default;
-
-  void
-  operator()() override
-  {
-    y_ = gauss_solver::solve(std::move(le_));
-    le_.~LinearEquation();
-  }
-
-  std::vector<double>
-  y()
-  {
-    return std::move(y_);
-  }
-};
-
-class LUSolverTask final : public Task
-{
-  LinearEquation le_;
-  std::size_t block_size_;
-  std::vector<double> y_;
-
-public:
-  explicit LUSolverTask(LinearEquation le, std::size_t block_size = DEFAULT_BLOCK_SIZE)
-    : le_(std::move(le))
-    , block_size_(block_size)
-  {
-  }
-
-  ~LUSolverTask() override = default;
-
-  void
-  operator()() override
-  {
-    y_ = solve(std::move(le_));
-    le_.~LinearEquation();
-  }
-
-  std::vector<double>
-  y()
-  {
-    return std::move(y_);
-  }
-};
-
-class LUSolverParallelTask final : public Task
-{
-  LinearEquation le_;
-  std::shared_ptr<ThreadPool> pool_;
-  std::size_t block_size_;
-  std::vector<double> y_;
-
-public:
-  LUSolverParallelTask(LinearEquation le, std::shared_ptr<ThreadPool> pool, std::size_t block_size = DEFAULT_BLOCK_SIZE)
-    : le_(std::move(le))
-    , pool_(std::move(pool))
-    , block_size_(block_size)
-  {
-  }
-
-  ~LUSolverParallelTask() override = default;
-
-  void
-  operator()() override
-  {
-    y_ = solve_parallel(std::move(le_), *pool_);
-    pool_.~shared_ptr();
-  }
-
-  std::vector<double>
-  y()
-  {
-    return std::move(y_);
-  }
-};
-
 }
+
+TASK(GaussSolver,
+     (LinearEquation, le_),
+     {
+       gauss_solver::solve(std::move(le_));
+     });
+
+TASK(LUSolver,
+     (LinearEquation, le_),
+     {
+       lu_solver::solve(std::move(le_));
+     });
+
+TASK(LUSolverParallel,
+     (LinearEquation, le_),
+     (std::shared_ptr<ThreadPool>, pool_),
+     {
+       lu_solver::solve_parallel(std::move(le_), *pool_, tid);
+       pool_.reset();
+     });

@@ -1,4 +1,4 @@
-#include "./test_util.hpp"
+#include <assert.hpp>
 
 #include <thread_pool.hpp>
 
@@ -15,7 +15,7 @@ public:
   ~Sleep() override = default;
 
   void
-  operator()() override
+  operator()(std::size_t tid) override
   {
     std::this_thread::sleep_for(std::chrono::milliseconds(millis_));
   }
@@ -35,8 +35,7 @@ main()
   for (int i = 0; i < num_tasks; ++i)
     pool.enqueue(tasks.emplace_back(std::make_shared<Sleep>(sleep_time)));
 
-  for (const auto& task : tasks)
-    pool.await(task);
+  pool.stop();
 
   const auto end = std::chrono::steady_clock::now();
   const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();

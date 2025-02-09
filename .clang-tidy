@@ -18,6 +18,8 @@ Checks: '-*,
          -modernize-use-trailing-return-type,
          -readability-identifier-length,
          -readability-braces-around-statements,
+         -cppcoreguidelines-avoid-magic-numbers,
+         -readability-magic-numbers
          '
 
 WarningsAsErrors: '*'

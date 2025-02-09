@@ -1,4 +1,5 @@
-#include "./test_util.hpp"
+#include <assert.hpp>
+#include <type_traits.hpp>
 
 int
 main()
@@ -12,6 +13,9 @@ main()
   ASSERT_GE(0, 0);
   ASSERT_GE(1, 0);
   ASSERT_GT(1, 0);
+  ASSERT_BETWEEN(1, 1, 1);
+  ASSERT_BETWEEN(1, 0, 1);
+  ASSERT_BETWEEN(1, 1, 2);
 
   ASSERT(true, "some test message %s", "test");
   ASSERT_EQ(0, 0, "some test message %s", "test");
