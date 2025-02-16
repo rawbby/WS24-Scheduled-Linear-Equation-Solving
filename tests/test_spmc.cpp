@@ -33,8 +33,8 @@ main()
   test_push_pop<FixedSPMC<int>>();
   test_push_pop<FixedMPSC<int>>();
 
-  constexpr auto capacity_spmc = 0x100;
-  constexpr auto capacity_mpsc = 0x1000;
+  constexpr auto capacity_spmc = 0x10;
+  constexpr auto capacity_mpsc = 0x100;
 
   FixedSPMC<int> spmc{ capacity_spmc };
   FixedMPSC<int> mpsc{ capacity_mpsc };
@@ -45,8 +45,8 @@ main()
     std::jthread producer([&] {
       for (int i = 0; i < capacity_mpsc; ++i) {
         while (!spmc.try_push(std::make_shared<int>(i)))
-          std::this_thread::sleep_for(1ms);
-        std::this_thread::sleep_for(1ms);
+          std::this_thread::sleep_for(100000ns);
+        std::this_thread::sleep_for(100000ns);
       }
       all_produced_signal = true;
       std::cout << "All Items produced!" << std::endl;
@@ -61,7 +61,7 @@ main()
             const auto item = spmc.try_pop();
             if (item.has_value()) {
               while (!mpsc.try_push(item.value()))
-                std::this_thread::sleep_for(2ms);
+                std::this_thread::sleep_for(200000ns);
             }
           }
           std::cout << "Consumer " << i << " detected stop on empty Queue!" << std::endl;

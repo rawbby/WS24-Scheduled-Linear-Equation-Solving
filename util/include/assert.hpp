@@ -3,6 +3,7 @@
 #include "./type_traits.hpp"
 
 #include <cstdio>
+#include <string>
 
 #ifndef NDEBUG
 #define DEBUG 1
@@ -49,8 +50,8 @@ safe_to_string(const T& value)
 
 #define OPERATOR_ASSERT_FAIL_(op, lhs, rhs, ...)                                                \
   do {                                                                                          \
-    const auto lhs_str = internal::assert::safe_to_string(lhs);                                 \
-    const auto rhs_str = internal::assert::safe_to_string(rhs);                                 \
+    const auto lhs_str = ::internal::assert::safe_to_string(lhs);                               \
+    const auto rhs_str = ::internal::assert::safe_to_string(rhs);                               \
     std::fprintf(stderr,                                                                        \
                  "[ASSERTION FAILED]\n"                                                         \
                  "  Condition  : " #lhs " " op " " #rhs "\n"                                    \

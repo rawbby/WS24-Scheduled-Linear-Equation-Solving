@@ -20,9 +20,11 @@ protected:
   void
   on_linear_equation(LinearEquation&& le, std::size_t queued) override
   {
-    if ((pool_->idle() - 1) <= queued)
-      pool_->enqueue_round(std::make_shared<LUSolver>(std::move(le)), ++i);
-    else
+    if (le.n >= 1024 && (queued < pool_->num_threads() || pool_->idle()))
       pool_->enqueue_round(std::make_shared<LUSolverParallel>(std::move(le), pool_), ++i);
+    else if (le.n >= 2048)
+      pool_->enqueue_round(std::make_shared<LUSolverParallel>(std::move(le), pool_), ++i);
+    else
+      pool_->enqueue_round(std::make_shared<LUSolver>(std::move(le)), ++i);
   }
 };

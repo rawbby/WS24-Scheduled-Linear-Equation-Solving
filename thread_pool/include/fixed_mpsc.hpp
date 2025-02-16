@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <bit>
 
 template<typename T>
 class FixedMPSC

@@ -18,9 +18,6 @@
 #include <queue>
 #include <string>
 
-#include <pthread.h>
-#include <sched.h>
-
 int
 main(int argc, char* argv[])
 {

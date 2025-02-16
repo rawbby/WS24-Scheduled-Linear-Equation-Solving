@@ -26,7 +26,7 @@ static std::string thread_dump_suffix_{};
 class ThreadPool
 {
 private:
-  const std::size_t num_threads;
+  const std::size_t num_threads_;
   std::atomic_bool stop_flag_;
 
   std::vector<std::thread> workers_;
@@ -39,7 +39,7 @@ private:
 
 public:
   explicit ThreadPool(std::size_t num_threads = std::max(1u, std::thread::hardware_concurrency() - 1u))
-    : num_threads(num_threads)
+    : num_threads_(num_threads)
     , stop_flag_(false)
     , working_count_(num_threads)
     , meta_sum_run_duration_(num_threads)
@@ -104,7 +104,7 @@ public:
     DEBUG_ASSERT(stop_flag_);
     DEBUG_ASSERT(tasks_.empty());
     DEBUG_ASSERT_EQ(working_count_, 0);
-    for (std::size_t i = 0; i < num_threads; ++i) {
+    for (std::size_t i = 0; i < num_threads_; ++i) {
       std::cout << "[Worker " << i << "] ";
       std::cout << "[waiting:" << std::fixed << static_cast<double>(meta_sum_wait_[i] / 1000ull) / 1000.0 << "ms]";
       std::cout << "[running:" << std::fixed << static_cast<double>(meta_sum_run_duration_[i] / 1000ull) / 1000.0 << "ms]\n";
@@ -122,7 +122,7 @@ public:
   {
     DEBUG_ASSERT_NE(task, nullptr);
     DEBUG_ASSERT(!task->finished());
-    DEBUG_ASSERT_BETWEEN(tid, 0, num_threads);
+    DEBUG_ASSERT_BETWEEN(tid, 0, num_threads_);
     push(std::move(task), tid);
   }
 
@@ -131,7 +131,7 @@ public:
   {
     DEBUG_ASSERT_NE(task, nullptr);
     DEBUG_ASSERT(!task->finished());
-    push(std::move(task), tid % num_threads);
+    push(std::move(task), tid % num_threads_);
   }
 
   void
@@ -147,7 +147,7 @@ public:
   await(const std::shared_ptr<Task>& task, std::size_t tid)
   {
     DEBUG_ASSERT_NE(task, nullptr);
-    DEBUG_ASSERT_BETWEEN(tid, 0, num_threads);
+    DEBUG_ASSERT_BETWEEN(tid, 0, num_threads_);
     while (!task->finished()) {
       auto optional_task = try_pop(tid);
       if (optional_task.has_value()) {
@@ -167,24 +167,6 @@ public:
     DEBUG_ASSERT_NE(task, nullptr);
     while (!task->finished())
       std::this_thread::yield();
-  }
-
-  std::size_t
-  idle() const
-  {
-    return num_threads - working_count_;
-  }
-
-  std::size_t
-  load() const
-  {
-    return size_.load(std::memory_order_acquire);
-  }
-
-  bool
-  empty() const
-  {
-    return size_.load(std::memory_order_acquire) == 0;
   }
 
 private:
@@ -209,7 +191,7 @@ private:
     size_.fetch_add(1, std::memory_order_release);
     DEBUG_ASSERT_NE(task, nullptr);
     DEBUG_ASSERT(!task->finished());
-    DEBUG_ASSERT_LT(tid, num_threads);
+    DEBUG_ASSERT_LT(tid, num_threads_);
     if (!local_tasks_[tid].try_push(task))
       overflow_tasks_[tid].push(std::move(task));
     push_vc_.notify_one();
@@ -227,7 +209,7 @@ private:
     }
     auto min_i = std::numeric_limits<std::size_t>::min();
     auto min_s = std::numeric_limits<std::size_t>::max();
-    for (std::size_t i = 0; i < num_threads; ++i) {
+    for (std::size_t i = 0; i < num_threads_; ++i) {
       const auto s = overflow_tasks_[i].size_hint();
       if (!s) {
         overflow_tasks_[i].push(std::move(task));
@@ -253,7 +235,7 @@ private:
       size_.fetch_sub(1, std::memory_order_release);
       return task.value();
     };
-    const auto set_task = [this, &task](auto& container) {
+    const auto set_task = [&task](auto& container) {
       task = container.try_pop();
       return task.has_value();
     };
@@ -263,19 +245,21 @@ private:
 
     if (set_task(local_tasks_[tid]))
       return get_task();
+    if (set_task(local_tasks_[tid]))
+      return get_task();
     if (set_task(overflow_tasks_[tid]))
       return get_task();
     if (set_task(tasks_))
       return get_task();
 
-    for (std::size_t i = tid + 1; i < num_threads; ++i)
+    for (std::size_t i = tid + 1; i < num_threads_; ++i)
       if (set_task(overflow_tasks_[i]))
         return get_task();
     for (std::size_t i = 0; i < tid; ++i)
       if (set_task(overflow_tasks_[i]))
         return get_task();
 
-    for (std::size_t i = tid + 1; i < num_threads; ++i)
+    for (std::size_t i = tid + 1; i < num_threads_; ++i)
       if (set_task(local_tasks_[i]))
         return get_task();
     for (std::size_t i = 0; i < tid; ++i)
@@ -309,5 +293,29 @@ private:
         working_count_.fetch_add(1, std::memory_order::release);
       }
     }
+  }
+
+public:
+  std::size_t
+  num_threads() const
+  {
+    return num_threads_;
+  }
+  std::size_t
+  idle() const
+  {
+    return num_threads_ - working_count_.load(std::memory_order_acquire);
+  }
+
+  std::size_t
+  load() const
+  {
+    return size_.load(std::memory_order_acquire);
+  }
+
+  bool
+  empty() const
+  {
+    return size_.load(std::memory_order_acquire) == 0;
   }
 };
