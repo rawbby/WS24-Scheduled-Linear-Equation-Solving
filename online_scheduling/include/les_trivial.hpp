@@ -18,6 +18,6 @@ protected:
   void
   on_linear_equation(LinearEquation&& le, std::size_t queued) override
   {
-    pool_->enqueue(std::make_shared<LUSolver>(std::move(le)), 2);
+    pool_->enqueue(std::make_shared<LUSolver>(std::move(le)));
   }
 };

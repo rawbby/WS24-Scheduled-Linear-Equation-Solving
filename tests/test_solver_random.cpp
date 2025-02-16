@@ -17,9 +17,7 @@ test_small_random_system()
   const auto instance = generate_diagonally_dominant_system(n);
 
   const auto x_lu = lu_solver::solve(instance);
-
-  auto pool = ThreadPool{};
-  const auto x_lu_parallel = lu_solver::solve_parallel(instance, pool, 0);
+  const auto x_lu_parallel = lu_solver::solve_parallel(instance);
 
   for (std::size_t i = 0; i < n; ++i) {
     ASSERT_NEAR(x_lu[i], x_lu_parallel[i], 1e-4, "Mismatch at index %zu in random system (%f !~= %f)", i, x_lu[i], x_lu_parallel[i]);
@@ -34,13 +32,10 @@ test_big_random_system()
   const auto instance = generate_diagonally_dominant_system(n);
 
   const auto x_lu = lu_solver::solve(instance);
+  const auto x_lu_parallel = lu_solver::solve_parallel(instance);
 
-  auto pool = ThreadPool{};
-  const auto x_lu_parallel = lu_solver::solve_parallel(instance, pool, 0);
-
-  for (std::size_t i = 0; i < n; ++i) {
+  for (std::size_t i = 0; i < n; ++i)
     ASSERT_NEAR(x_lu[i], x_lu_parallel[i], 1e-4, "Mismatch at index %zu in random system (%f !~= %f)", i, x_lu[i], x_lu_parallel[i]);
-  }
 }
 
 int

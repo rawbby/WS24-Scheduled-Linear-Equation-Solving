@@ -6,6 +6,8 @@
 
 class LES_size_mixed final : public LinearEquationSchedulerBase
 {
+  int i = 0;
+
 public:
   ~LES_size_mixed() override = default;
 
@@ -18,9 +20,9 @@ protected:
   void
   on_linear_equation(LinearEquation&& le, std::size_t queued) override
   {
-    if (le.n < 2048 || (pool_->idle_count() - 1) <= queued)
-      pool_->enqueue(std::make_shared<LUSolver>(std::move(le)), 1);
+    if (le.n < 2048 || (pool_->idle() - 1) <= queued)
+      pool_->enqueue_round(std::make_shared<LUSolver>(std::move(le)), ++i);
     else
-      pool_->enqueue(std::make_shared<LUSolverParallel>(std::move(le), pool_), 1);
+      pool_->enqueue_round(std::make_shared<LUSolverParallel>(std::move(le), pool_), ++i);
   }
 };

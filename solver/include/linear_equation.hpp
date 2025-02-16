@@ -12,7 +12,7 @@
 #include <utility>
 #include <vector>
 
-struct LinearEquation
+struct LinearEquation final
 {
   std::size_t n{};
   std::vector<double> A; // Coefficient matrix in row-major order (size n*n)

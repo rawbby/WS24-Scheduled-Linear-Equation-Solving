@@ -17,9 +17,7 @@ main()
 
   const auto x_gauss = gauss_solver::solve(instance);
   const auto x_lu = lu_solver::solve(instance);
-
-  auto pool = ThreadPool{};
-  const auto x_lu_parallel = lu_solver::solve_parallel(instance, pool, 0);
+  const auto x_lu_parallel = lu_solver::solve_parallel(instance);
 
   auto compute_residual = [&](const std::vector<double>& x) -> double {
     double max_residual = 0.0;

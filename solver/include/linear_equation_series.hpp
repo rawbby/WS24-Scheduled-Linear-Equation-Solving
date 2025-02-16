@@ -26,7 +26,7 @@ public:
   {
     std::ofstream ofs(filename, std::ios::binary);
     if (!ofs)
-      throw std::runtime_error("failed to open file");
+      throw std::runtime_error("failed to open file " + filename);
 
     const std::size_t count = instances.size();
     {

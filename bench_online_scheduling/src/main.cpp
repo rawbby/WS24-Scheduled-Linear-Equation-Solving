@@ -1,118 +1,92 @@
+#include <LES_verification.hpp>
 #include <les_mixed.hpp>
 #include <les_parallel.hpp>
+#include <les_size_mixed.hpp>
 #include <les_trivial.hpp>
 #include <linear_equation.hpp>
 #include <linear_equation_series.hpp>
 #include <linear_equation_series_producer.hpp>
 
+#include <bench.hpp>
+
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
+#include <functional>
 #include <iostream>
+#include <mutex>
+#include <queue>
+#include <string>
+
+#include <pthread.h>
+#include <sched.h>
 
 int
-main()
+main(int argc, char* argv[])
 {
+  if (argc != 7) {
+    std::cerr << "Usage: " << argv[0] << " <scheduler_name> <num_threads> <load_factor> <min_n> <max_n> <score>\n";
+    std::exit(1);
+  }
+
+  const std::string scheduler_name = argv[1];
+  const unsigned num_threads = std::stoul(argv[2]);
+  const double load_factor = std::stod(argv[3]);
+  const unsigned min_n = std::stoul(argv[4]);
+  const unsigned max_n = std::stoul(argv[5]);
+  const unsigned score = std::stoul(argv[6]);
+
   const auto problem_queue = std::make_shared<std::queue<LinearEquation>>();
   const auto queue_mutex = std::make_shared<std::mutex>();
   const auto queue_cv = std::make_shared<std::condition_variable>();
 
-  double total_time = 0.0;
-
-#ifdef DEBUG
-  constexpr auto min_n = 32;
-  constexpr auto max_n = 1024;
-  constexpr auto score = 20;
-#else
-  constexpr auto min_n = 1024;
-  constexpr auto max_n = 4096;
-  constexpr auto score = 180;
-#endif
-
-  const auto filename = std::string{ "series_" } + std::to_string(min_n) + std::string("_") + std::to_string(max_n) + std::string("_") + std::to_string(score) + std::string(".raw");
-  if (!std::filesystem::directory_entry{ filename }.exists()) {
-    std::cout << "Creating new problem series..." << std::endl;
+  const std::string filename = "./series_" + std::to_string(min_n) + "_" + std::to_string(max_n) + "_" + std::to_string(score) + ".raw";
+  if (!std::filesystem::exists(filename)) {
     const auto series = generate_problem_series(min_n, max_n, score);
-
-    std::cout << "Writing new problem series..." << std::endl;
     series.serialize(filename);
-    for (const auto& instance : series.instances)
-      total_time += instance.score;
-
-    std::cout << "New problem series: min n " << min_n << ", max n " << max_n << ", total score " << std::fixed << total_time << "s" << std::endl;
-  } else {
-    std::cout << "Reading problem series..." << std::endl;
-    const auto [instances] = LinearEquationSeries::deserialize(filename);
-    for (const auto& instance : instances)
-      total_time += instance.score;
-    std::cout << "Problem series: min n " << min_n << ", max n " << max_n << ", total score " << std::fixed << total_time << "s" << std::endl;
   }
 
-  std::vector<std::pair<std::string, std::function<std::shared_ptr<LinearEquationSchedulerBase>(std::size_t)>>> schedulers{
-    { "mixed", [=](std::size_t num_threads) { return std::make_shared<LES_mixed>(problem_queue, queue_mutex, queue_cv, num_threads); } },
-    { "parallel", [=](std::size_t num_threads) { return std::make_shared<LES_parallel>(problem_queue, queue_mutex, queue_cv, num_threads); } },
-    { "trivial", [=](std::size_t num_threads) { return std::make_shared<LES_trivial>(problem_queue, queue_mutex, queue_cv, num_threads); } },
-  };
-  constexpr auto map_load = [](double load_factor) {
-    auto num_threads = static_cast<unsigned>(2.0 * load_factor);
-    num_threads = std::max(1u, num_threads);
-    num_threads = std::min(num_threads, std::thread::hardware_concurrency() - 1u);
-    return std::pair{ num_threads, load_factor };
-  };
-
-  std::vector load_factors{
-    map_load(8.0),
-    map_load(4.0),
-    map_load(2.0),
-    map_load(1.0),
-    map_load(0.9),
-
-    // optional extremes
-    map_load(10.0),
-    map_load(0.95),
-
-    // optional more data points
-    map_load(6.0),
-    map_load(3.0),
-    map_load(1.5),
-  };
   const auto les = LinearEquationSeries::deserialize(filename);
+  double total_time = 0.0;
+  for (const auto& instance : les.instances)
+    total_time += instance.score;
 
-  for (const auto [num_threads, load_factor] : load_factors) {
-    for (const auto& [name, make_scheduler] : schedulers) {
+  std::unordered_map<std::string, std::function<std::shared_ptr<LinearEquationSchedulerBase>()>> schedulers{
+    { "verification_a", [=] { return std::make_shared<LES_verification_a>(problem_queue, queue_mutex, queue_cv); } },
+    { "verification_b", [=] { return std::make_shared<LES_verification_b>(problem_queue, queue_mutex, queue_cv); } },
+    { "size_mixed", [=] { return std::make_shared<LES_size_mixed>(problem_queue, queue_mutex, queue_cv, num_threads); } },
+    { "mixed", [=] { return std::make_shared<LES_mixed>(problem_queue, queue_mutex, queue_cv, num_threads); } },
+    { "trivial", [=] { return std::make_shared<LES_trivial>(problem_queue, queue_mutex, queue_cv, num_threads); } },
+    { "parallel", [=] { return std::make_shared<LES_parallel>(problem_queue, queue_mutex, queue_cv, num_threads); } },
+  };
 
-      std::cout << std::endl;
-      std::cout << "[Main] Start ";
-      std::cout << "[scheduler:" << name << "]";
-      std::cout << "[threads:" << num_threads << "]";
-      std::cout << "[score:" << std::fixed << total_time << "s]";
-      std::cout << "[load:" << std::fixed << (100.0 * load_factor) << "%]" << std::endl;
-
-      double elapsed;
-      {
-        DEBUG_ASSERT(problem_queue->empty());
-
-        // Create and start the problem producer and scheduler.
-        auto producer = LinearEquationSeriesProducer{ les, load_factor, problem_queue, queue_mutex, queue_cv };
-        const auto scheduler = make_scheduler(num_threads);
-        producer.start();
-
-        const auto start = std::chrono::steady_clock::now();
-        scheduler->start();
-        producer.join();   // wait for the producer to finish
-        scheduler->stop(); // signal to stop when queue is empty
-        const auto end = std::chrono::steady_clock::now();
-
-        elapsed = std::chrono::duration<double>(end - start).count();
-      } // ensure cleanup before report
-
-      std::cout.flush();
-      std::cout << "[Main] Finished ";
-      std::cout << "[scheduler:" << name << "]";
-      std::cout << "[time:" << std::fixed << elapsed << "s]";
-      std::cout << "[efficiency:" << std::fixed << 100.0 * ((total_time / num_threads) / elapsed) << "%]";
-      std::cout << "[threads:" << num_threads << "]";
-      std::cout << "[score:" << std::fixed << total_time << "s]";
-      std::cout << "[load:" << std::fixed << (100.0 * load_factor) << "%]" << std::endl;
-    }
+  auto make_scheduler = schedulers[scheduler_name];
+  if (!make_scheduler) {
+    std::cerr << "Scheduler '" << scheduler_name << "' not found.\n";
+    return 1;
   }
+
+  thread_dump_suffix_ = scheduler_name + "_" + std::to_string(num_threads) + "_" +
+                        std::to_string(load_factor) + "_" + std::to_string(min_n) + "_" +
+                        std::to_string(max_n) + "_" + std::to_string(score);
+
+  std::cout << "[Main] Start [scheduler:" << scheduler_name << "][threads:" << num_threads
+            << "][load:" << (100.0 * load_factor) << "%][min_n:" << min_n
+            << "][max_n:" << max_n << "][score:" << score << "]\n";
+
+  DEBUG_ASSERT(problem_queue->empty());
+  auto producer = LinearEquationSeriesProducer{ les, load_factor, problem_queue, queue_mutex, queue_cv };
+  producer.start();
+
+  const auto scheduler = make_scheduler();
+  START(bench);
+  scheduler->start();
+  producer.join();
+  scheduler->stop();
+  const auto duration = END(bench);
+
+  std::cout << "[Main] Finished [scheduler:" << scheduler_name << "][time:" << std::fixed
+            << duration << "s][efficiency:" << std::fixed
+            << 100.0 * ((total_time / num_threads) / duration) << "%][threads:" << num_threads
+            << "][load:" << (100.0 * load_factor) << "%]\n";
 }

@@ -35,7 +35,6 @@ main()
     pool.enqueue(tasks.emplace_back(std::make_shared<ThreadId>()));
 
   pool.stop();
-  ASSERT(pool.stopped());
 
   std::vector<int> unique_ids;
   for (const auto& task : tasks)

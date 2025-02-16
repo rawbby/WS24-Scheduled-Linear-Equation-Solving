@@ -35,9 +35,8 @@ public:
   void
   join()
   {
-    if (producer_thread_.joinable()) {
+    if (producer_thread_.joinable())
       producer_thread_.join();
-    }
   }
 
 private:
