@@ -151,7 +151,7 @@ public:
     while (!task->finished()) {
       auto optional_task = try_pop(tid);
       if (optional_task.has_value()) {
-        const auto gap_task = optional_task.value();
+        const auto& gap_task = optional_task.value();
         DEBUG_ASSERT_NE(gap_task, nullptr);
         DEBUG_ASSERT(!gap_task->finished());
         gap_task->run(tid);
